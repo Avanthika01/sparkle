@@ -1,0 +1,332 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # QUALITY GATE
+  # ═══════════════════════════════════════════════════════════════════════════
+  quality:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier check
+        run: npm run format:check
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # TEST
+  # ═══════════════════════════════════════════════════════════════════════════
+  test:
+    name: Test & Coverage
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          flags: unittests
+          name: sparkle-coverage
+          fail_ci_if_error: false
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # BUILD STAGING
+  # ═══════════════════════════════════════════════════════════════════════════
+  build-staging:
+    name: Build (Staging)
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for staging
+        run: npm run build:staging
+        env:
+          VITE_API_URL: ${{ vars.STAGING_API_URL }}
+          VITE_APP_TITLE: 'Sparkle (Staging)'
+
+      - name: Upload staging build
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-build
+          path: dist/
+          retention-days: 7
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # BUILD PRODUCTION
+  # ═══════════════════════════════════════════════════════════════════════════
+  build-production:
+    name: Build (Production)
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for production
+        run: npm run build:production
+        env:
+          VITE_API_URL: ${{ vars.PRODUCTION_API_URL }}
+          VITE_APP_TITLE: 'Sparkle'
+
+      - name: Upload production build
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-build
+          path: dist/
+          retention-days: 30
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DEPLOY STAGING
+  # ═══════════════════════════════════════════════════════════════════════════
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-staging
+    if: github.ref == 'refs/heads/develop'
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download staging build
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-build
+          path: dist/
+
+      - name: Deploy to Vercel (Staging)
+        id: deploy
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: ./
+          alias-domains: staging-sparkle.vercel.app
+
+      - name: Notify Slack (Staging Deploy)
+        if: always()
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '❌' }} Staging deployment ${{ job.status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Sparkle Staging Deployment*\n${{ job.status == 'success' && '✅ Successfully deployed' || '❌ Deployment failed' }}\n<${{ steps.deploy.outputs.url }}|View deployment>"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "Branch: `${{ github.ref_name }}` | Commit: `${{ github.sha }}`"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DEPLOY PRODUCTION
+  # ═══════════════════════════════════════════════════════════════════════════
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build-production
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download production build
+        uses: actions/download-artifact@v4
+        with:
+          name: production-build
+          path: dist/
+
+      - name: Deploy to Vercel (Production)
+        id: deploy
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+          working-directory: ./
+
+      - name: Notify Slack (Production Deploy)
+        if: always()
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '🚀' || '❌' }} Production deployment ${{ job.status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Sparkle Production Deployment*\n${{ job.status == 'success' && '🚀 Successfully deployed to production!' || '❌ Production deployment failed' }}\n<${{ steps.deploy.outputs.url }}|View deployment>"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "Branch: `${{ github.ref_name }}` | Commit: `${{ github.sha }}`"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ENTERPRISE DISTRIBUTION
+  # ═══════════════════════════════════════════════════════════════════════════
+  enterprise-distribution:
+    name: Enterprise Distribution
+    runs-on: ubuntu-latest
+    needs: build-production
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download production build
+        uses: actions/download-artifact@v4
+        with:
+          name: production-build
+          path: dist/
+
+      - name: Package for enterprise CDN
+        run: |
+          mkdir -p enterprise-package
+          cp -r dist/* enterprise-package/
+          echo "{\"version\": \"${{ github.sha }}\", \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"branch\": \"${{ github.ref_name }}\"}" > enterprise-package/manifest.json
+          tar -czvf sparkle-enterprise-${{ github.sha }}.tar.gz -C enterprise-package .
+
+      - name: Upload enterprise package
+        uses: actions/upload-artifact@v4
+        with:
+          name: enterprise-package
+          path: sparkle-enterprise-${{ github.sha }}.tar.gz
+          retention-days: 90
+
+      - name: Upload to enterprise CDN
+        if: ${{ secrets.ENTERPRISE_CDN_ENDPOINT != '' }}
+        run: |
+          echo "Uploading to enterprise CDN..."
+          # Example: aws s3 cp sparkle-enterprise-${{ github.sha }}.tar.gz s3://${{ secrets.ENTERPRISE_CDN_BUCKET }}/
+          # Example: curl -X PUT -H "Authorization: Bearer ${{ secrets.ENTERPRISE_CDN_TOKEN }}" \
+          #   -T sparkle-enterprise-${{ github.sha }}.tar.gz \
+          #   ${{ secrets.ENTERPRISE_CDN_ENDPOINT }}/sparkle/${{ github.sha }}/
+        env:
+          ENTERPRISE_CDN_ENDPOINT: ${{ secrets.ENTERPRISE_CDN_ENDPOINT }}
+
+      - name: Notify Slack (Enterprise Package)
+        if: success()
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "📦 Enterprise package ready",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Enterprise Distribution Package Ready*\n📦 Package: `sparkle-enterprise-${{ github.sha }}.tar.gz`\nAvailable for download from workflow artifacts."
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

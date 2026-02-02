@@ -1,0 +1,66 @@
+services:
+  # Development server with hot reload
+  dev:
+    build:
+      context: .
+      target: development
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+
+  # Run tests
+  test:
+    build:
+      context: .
+      target: test
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=test
+
+  # Run tests with coverage
+  test-coverage:
+    build:
+      context: .
+      target: test
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - ./coverage:/app/coverage
+    command: npm run test:coverage
+    environment:
+      - NODE_ENV=test
+
+  # Production build (staging)
+  staging:
+    build:
+      context: .
+      target: production
+      args:
+        BUILD_MODE: staging
+    ports:
+      - "8080:80"
+
+  # Production build
+  production:
+    build:
+      context: .
+      target: production
+      args:
+        BUILD_MODE: production
+    ports:
+      - "80:80"
+
+  # CI validation (quality + tests)
+  ci:
+    build:
+      context: .
+      target: test
+    command: npm run validate
+    environment:
+      - NODE_ENV=test

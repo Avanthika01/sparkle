@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+build/
+
+# Coverage
+coverage/
+
+# Environment files with secrets
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+/test-results/
+/playwright-report/
+
+# Terraform
+infra/*.tfstate
+infra/*.tfstate.*
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/terraform.tfvars

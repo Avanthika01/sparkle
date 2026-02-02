@@ -1,0 +1,6 @@
+# Copy this file to terraform.tfvars and fill in your values
+# DO NOT commit terraform.tfvars to git (contains sensitive info)
+
+aws_region  = "us-east-1"
+github_org  = "YOUR_GITHUB_USERNAME"
+github_repo = "sparkle"
