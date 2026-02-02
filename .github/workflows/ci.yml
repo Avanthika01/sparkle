@@ -300,7 +300,7 @@ jobs:
           retention-days: 90
 
       - name: Upload to enterprise CDN
-        if: ${{ secrets.ENTERPRISE_CDN_ENDPOINT != '' }}
+        if: ${{ vars.ENTERPRISE_CDN_ENABLED == 'true' }}
         run: |
           echo "Uploading to enterprise CDN..."
           # Example: aws s3 cp sparkle-enterprise-${{ github.sha }}.tar.gz s3://${{ secrets.ENTERPRISE_CDN_BUCKET }}/
