@@ -1,0 +1,72 @@
+name: Deploy to AWS
+
+on:
+  workflow_dispatch:  # Manual trigger - creates "Run workflow" button
+
+env:
+  AWS_REGION: us-east-2
+  ECR_REPOSITORY: sparkle-todo
+  EC2_INSTANCE_ID: i-06d524b5afa081dd7
+
+# Required for OIDC authentication
+permissions:
+  id-token: write   # Allows requesting JWT from GitHub
+  contents: read    # Allows checkout
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Configure AWS credentials using OIDC
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::014885975907:role/github-actions-sparkle
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 3. Login to ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 4. Build and push Docker image
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build --target production -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker build --target production -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      # 5. Deploy to EC2 via SSM
+      - name: Deploy to EC2
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          aws ssm send-command \
+            --instance-ids $EC2_INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="[
+              \"aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY\",
+              \"docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest\",
+              \"docker stop sparkle-app || true\",
+              \"docker rm sparkle-app || true\",
+              \"docker run -d --name sparkle-app -p 80:80 $ECR_REGISTRY/$ECR_REPOSITORY:latest\"
+            ]" \
+            --output text \
+            --query "Command.CommandId"
+
+      # 6. Wait for deployment to complete
+      - name: Wait for deployment
+        run: |
+          echo "Waiting 30 seconds for deployment to complete..."
+          sleep 30
+          echo "App should be available at http://18.226.93.145"
