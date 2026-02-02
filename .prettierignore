@@ -1,0 +1,14 @@
+# Ignore YAML files
+*.yml
+*.yaml
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Dependencies
+node_modules/
+
+# Terraform
+infra/
