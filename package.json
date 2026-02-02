@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --no-file-parallelism",
     "test:ui": "vitest --ui",
     "quality": "npm run typecheck && npm run lint && npm run format:check",
     "validate": "npm run quality && npm run test:coverage"
