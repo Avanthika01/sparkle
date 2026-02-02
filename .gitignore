@@ -30,6 +30,9 @@ npm-debug.log*
 /test-results/
 /playwright-report/
 
+# Claude
+.claude/
+
 # Terraform
 infra/*.tfstate
 infra/*.tfstate.*
